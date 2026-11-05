@@ -4,8 +4,8 @@ require("game.entity")
 return class.register({
     __classname = "game.weapon.gun",
     __basename = "game.entity",
-    __constr = function(self, name, ammo)
-        super.__constr(self, name)
+    __ = function(self, name, ammo)
+        super.__(self, name)
         self.ammo = ammo or 0
     end,
     fire = function(self)

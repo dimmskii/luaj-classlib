@@ -1,8 +1,11 @@
 package org.luaj.vm2;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -27,20 +30,19 @@ public class LuaClassManager {
 	/** The base class table, nil for a class with no base. */
 	public static final String CLASSTABLE_BASE_KEY = "__base";
 	/**
-	 * The class's constructor: a method {@code new} calls on each new instance, with {@code new}'s other arguments
-	 * ({@code __constr = function(self, ...) end}). Copied into subclasses like any other method: a class without its
-	 * own has its nearest ancestor's. A class with none at all answers its own default, one that does nothing
-	 * ({@link ClassLuaTable#getConstructor}); so every class has one, and {@code super.__constr} can always be called
-	 * from a class with a base.
+	 * The class's constructor: a method run on each new instance, given the arguments it was made with
+	 * ({@code Class(...)}, {@code new(Class, ...)}). Defined as {@code __ = function(self, ...) end}, or
+	 * {@code function C:__(...) end}. Copied into subclasses like any other method: a class without its own has its
+	 * nearest ancestor's. A class with none at all answers its own default, one that does nothing
+	 * ({@link ClassLuaTable#getConstructor}); so every class has one, and {@code super.__} can always be called from
+	 * a class with a base.
 	 */
-	public static final String CONSTRUCTOR_KEY = "__constr";
-	/** {@code Class.__new(...)}: a new instance of the class, its constructor given the arguments (as {@code new(Class, ...)}). */
-	public static final String NEW_FUNC_KEY = "__new";
+	public static final String CONSTRUCTOR_KEY = "__";
 
 	/** Keys the library keeps on every class: set at registration only (a later write is an error), never inherited. */
 	private static final Set<LuaValue> SYSTEM_KEYS = new HashSet<LuaValue>(Arrays.asList(new LuaValue[] {
 			LuaValue.valueOf(CLASSNAME_KEY), LuaValue.valueOf(CLASSNAME_SHORT_KEY), LuaValue.valueOf(CLASSNAME_BASE_KEY),
-			LuaValue.valueOf(CLASSTABLE_KEY), LuaValue.valueOf(CLASSTABLE_BASE_KEY), LuaValue.valueOf(NEW_FUNC_KEY) }));
+			LuaValue.valueOf(CLASSTABLE_KEY), LuaValue.valueOf(CLASSTABLE_BASE_KEY) }));
 	/** {@code __index}: each class's own (itself), never inherited. */
 	private static final LuaValue INDEX_KEY = LuaValue.INDEX;
 	/** {@link #CONSTRUCTOR_KEY} as a Lua string. */
@@ -100,22 +102,51 @@ public class LuaClassManager {
 	}
 
 	/**
-	 * Makes {@code table} a class and registers it.
-	 * <p>
-	 * {@code table} must have a {@link #CLASSNAME_KEY} string, a valid name ({@link #checkName}) not registered yet.
-	 * Its base is the class its {@link #CLASSNAME_BASE_KEY} string names, which must be registered already; without
-	 * one, the class has no base.
-	 * <p>
-	 * The new class holds {@code table}'s members as its own (its functions become this class's methods,
-	 * {@link ClassMethod}) and copies of its base's other members ({@link #updateInheritance}); later writes to it keep
-	 * that up to date down its subclasses ({@link #setMember}). {@code table} itself is only read.
+	 * Makes {@code table} a class and registers it, its base the one its {@link #CLASSNAME_BASE_KEY} names (if any):
+	 * {@link #registerClass(LuaValue, LuaValue)} with no base given.
 	 *
 	 * @param table the class's name, base name and members
 	 * @return the new class table
-	 * @throws LuaError if the name is missing, not a string, invalid or already registered, or the base named in
-	 *                  {@code table} isn't a string or isn't registered
+	 * @throws LuaError as {@link #registerClass(LuaValue, LuaValue)}
 	 */
 	public LuaTable registerClass(LuaTable table) {
+		return registerClass(table, LuaValue.NIL);
+	}
+
+	/**
+	 * Makes a class and registers it ({@code class.register(classDef [, base])}).
+	 * <p>
+	 * {@code classDef} is either a table with a {@link #CLASSNAME_KEY} string and the class's members, or just a class
+	 * name: an empty class (no members; its constructor the default, which does nothing). The name must be valid
+	 * ({@link #checkName}) and not registered yet.
+	 * <p>
+	 * {@code base} is the base class: a registered class's name, or a class registered here; nil for none given. When
+	 * given, it's the base whatever the table's {@link #CLASSNAME_BASE_KEY} says; when not, the base is the class that
+	 * names (it must be registered), or none.
+	 * <p>
+	 * The new class holds the table's members as its own (its functions become this class's methods,
+	 * {@link ClassMethod}) and copies of its base's other members ({@link #updateInheritance}); later writes to it keep
+	 * that up to date down its subclasses ({@link #setMember}). The table itself is only read.
+	 *
+	 * @param classDef the class's table (name, base name and members), or its name
+	 * @param base     the base class or its name, or nil
+	 * @return the new class table
+	 * @throws LuaError if {@code classDef} isn't a table or a name; the name is missing, not a string, invalid or
+	 *                  already registered; {@code base} isn't nil, a name or a class registered here; the base named
+	 *                  isn't registered or isn't a string; or the constructor isn't a function
+	 */
+	public LuaTable registerClass(LuaValue classDef, LuaValue base) {
+		// The class's table: the one given, or for a name alone, an empty one with that name
+		LuaTable table;
+		if (classDef.istable()) {
+			table = (LuaTable) classDef;
+		} else if (classDef.isstring() && !classDef.isnumber()) {
+			table = new LuaTable();
+			table.rawset(CLASSNAME_KEY, classDef);
+		} else {
+			throw new LuaError("class must be a table or a class name, got " + classDef.typename());
+		}
+
 		// Register class portion
 		LuaValue name = table.get(CLASSNAME_KEY);
 		if (!name.isstring() || name.isnumber()) {
@@ -130,10 +161,18 @@ public class LuaClassManager {
 			throw new LuaError("class '" + className + "' is already registered");
 		}
 
-		// The base, as the table names it (if it does): it must be registered
+		// The base: the one given (a name or a class registered here), or else the one the table names (if it does)
 		ClassLuaTable baseClassTable = null;
-		LuaValue baseName = table.get(CLASSNAME_BASE_KEY);
-		if (!baseName.isnil()) {
+		LuaValue baseName = base.isnil() ? table.get(CLASSNAME_BASE_KEY) : base;
+		if (base instanceof ClassLuaTable) {
+			baseClassTable = (ClassLuaTable) base;
+			if (classes.get(baseClassTable.getClassName()) != baseClassTable) {
+				throw new LuaError("class '" + className + "': base class '" + baseClassTable.getClassName()
+						+ "' isn't registered with this class library");
+			}
+		} else if (!base.isnil() && (!base.isstring() || base.isnumber())) {
+			throw new LuaError("class '" + className + "': base class must be a class or a class name, got " + base.typename());
+		} else if (!baseName.isnil()) {
 			if (!baseName.isstring() || baseName.isnumber()) {
 				throw new LuaError("class " + CLASSNAME_BASE_KEY + " must be a string, got " + baseName.typename());
 			}
@@ -251,6 +290,18 @@ public class LuaClassManager {
 		}
 	}
 
+	/**
+	 * Whether a key is one of the system fields the library keeps ({@link #CLASSNAME_KEY}, {@link #CLASSNAME_SHORT_KEY},
+	 * {@link #CLASSNAME_BASE_KEY}, {@link #CLASSTABLE_KEY}, {@link #CLASSTABLE_BASE_KEY}): set on neither classes nor
+	 * instances.
+	 *
+	 * @param key a key
+	 * @return whether it's a system field
+	 */
+	public static boolean isSystemKey(LuaValue key) {
+		return SYSTEM_KEYS.contains(key);
+	}
+
 	/** Whether a base's key is inherited: everything but the system fields and {@code __index}. */
 	private static boolean inherited(LuaValue key) {
 		return !SYSTEM_KEYS.contains(key) && !INDEX_KEY.raweq(key);
@@ -294,6 +345,84 @@ public class LuaClassManager {
 	 */
 	public ClassLuaTable getClassTable(String className) {
 		return this.classes.get(className);
+	}
+
+	/**
+	 * The names of all registered classes, sorted.
+	 *
+	 * @return the names (a new list)
+	 */
+	public List<String> getClassNames() {
+		return getClassNames(null);
+	}
+
+	/**
+	 * The names of the registered classes under a dotted prefix, sorted: {@code "game.weapon"} gives
+	 * {@code "game.weapon"} itself (if registered) and {@code "game.weapon.gun"}, but not {@code "game.weaponry"}.
+	 *
+	 * @param prefix the prefix, or {@code null} (or empty) for all classes
+	 * @return the names (a new list)
+	 */
+	public List<String> getClassNames(String prefix) {
+		List<String> names = new ArrayList<String>();
+		for (String name : classes.keySet()) {
+			if (prefix == null || prefix.isEmpty() || name.equals(prefix) || name.startsWith(prefix + ".")) {
+				names.add(name);
+			}
+		}
+		Collections.sort(names);
+		return names;
+	}
+
+	/**
+	 * A class's subclasses: those registered with it as their base, or with {@code all}, every class below it
+	 * (depth first, each subclass followed by its own).
+	 *
+	 * @param classTable the class
+	 * @param all        whether to include subclasses' subclasses, all the way down
+	 * @return the subclasses, in the order they were registered (a new list)
+	 */
+	public List<ClassLuaTable> getSubclasses(ClassLuaTable classTable, boolean all) {
+		List<ClassLuaTable> out = new ArrayList<ClassLuaTable>();
+		for (ClassLuaTable subclass : classTable.subclasses()) {
+			out.add(subclass);
+			if (all) {
+				out.addAll(getSubclasses(subclass, true));
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Whether a class is another, or extends it (directly or further up).
+	 *
+	 * @param classTable the class asked about
+	 * @param baseClass  the class it may be or extend
+	 * @param exact      only whether it's that very class
+	 * @return whether {@code classTable} is {@code baseClass} or ({@code exact} false) one of its subclasses
+	 */
+	public boolean isSubclass(ClassLuaTable classTable, ClassLuaTable baseClass, boolean exact) {
+		if (exact) {
+			return classTable == baseClass;
+		}
+		for (ClassLuaTable c = classTable; c != null; c = c.getBaseClassTable()) {
+			if (c == baseClass) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Whether an instance is of a class, or of one of its subclasses.
+	 *
+	 * @param instance  the instance
+	 * @param classTable the class
+	 * @param exact     only whether its class is that very class
+	 * @return whether {@code instance}'s class is {@code classTable} or ({@code exact} false) one of its subclasses
+	 */
+	public boolean isInstance(InstanceLuaTable instance, ClassLuaTable classTable, boolean exact) {
+		return isSubclass(instance.getClassTable(), classTable, exact);
 	}
 
 }

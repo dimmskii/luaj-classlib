@@ -73,12 +73,12 @@ print ("--------------------------------1")
 local ClassOne = class.register(
     {
         __classname="package.frackage.ClassOne",
-        __constr=function(self)
+        __=function(self)
             print(self.__shortname)
         end
     }
 )
-ClassOne:__new()
+ClassOne()
 print ("--------------------------------2")
 local ClassTwo = class.register(
     {
@@ -86,16 +86,16 @@ local ClassTwo = class.register(
         __basename="package.frackage.ClassOne"
     }
 )
-ClassTwo:__new()
+ClassTwo()
 print ("--------------------------------3")
 local ClassThree = class.register(
     {
         __classname="package.frackage.ClassThree",
         __basename="package.frackage.ClassTwo",
-        __constr=function(self)
+        __=function(self)
             print("boop")
-            super.__constr(self)
+            super.__(self)
         end
     }
 )
-ClassThree:__new()
+ClassThree()

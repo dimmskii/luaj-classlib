@@ -27,16 +27,13 @@ public class ClassLuaTable extends LuaTable {
 	private ClassLuaTable classTable;
 	private ClassLuaTable baseClassTable;
 
-	/** {@link LuaClassManager#NEW_FUNC_KEY}: one function per class, so {@code C.__new == C.__new}. */
-	private final NewFunction newFunction = new NewFunction();
-
 	/** {@link LuaClassManager#CONSTRUCTOR_KEY} as a Lua string, to recognize writes to it without converting keys. */
 	private static final LuaString CONSTRUCTOR_KEY = LuaString.valueOf(LuaClassManager.CONSTRUCTOR_KEY);
 
 	/**
 	 * The class's constructor: the {@link LuaClassManager#CONSTRUCTOR_KEY} stored in the table (its own, or copied from
 	 * its base), kept in step by {@link #hashset}; or, while the table holds none, the class's own default, which does
-	 * nothing. Read directly by {@link #getConstructor} and for {@code __constr}, so neither looks the table up.
+	 * nothing. Read directly by {@link #getConstructor} and for {@code __}, so neither looks the table up.
 	 */
 	private LuaValue constructor = new DefaultConstructor();
 
@@ -86,8 +83,6 @@ public class ClassLuaTable extends LuaTable {
 				case LuaClassManager.CLASSTABLE_BASE_KEY:
 					return baseClassTable == null ? NIL : baseClassTable; // nil, not Java null, for a root class
 				// Methods
-				case LuaClassManager.NEW_FUNC_KEY:
-					return newFunction;
 				case LuaClassManager.CONSTRUCTOR_KEY:
 					return constructor;
 
@@ -233,14 +228,37 @@ public class ClassLuaTable extends LuaTable {
 
 	}
 
-	/** {@code Class.__new(...)}: a new instance of this class, the arguments given to its constructor. */
-	private class NewFunction extends VarArgFunction {
+	// Calling the class, {@code Class(...)}, makes an instance: the arguments go to its constructor. Every call from
+	// Lua (interpreted, LuaJC, pcall, tail calls) reaches one of these, so the class needs no metatable for it.
 
-		@Override
-		public Varargs invoke(Varargs args) {
-			return createInstance(args);
-		}
+	/** {@code Class()}: a new instance, its constructor given no arguments. */
+	@Override
+	public LuaValue call() {
+		return createInstance(NONE);
+	}
 
+	/** {@code Class(a)}: a new instance, its constructor given {@code a}. */
+	@Override
+	public LuaValue call(LuaValue a) {
+		return createInstance(a);
+	}
+
+	/** {@code Class(a, b)}: a new instance, its constructor given {@code a, b}. */
+	@Override
+	public LuaValue call(LuaValue a, LuaValue b) {
+		return createInstance(varargsOf(a, b));
+	}
+
+	/** {@code Class(a, b, c)}: a new instance, its constructor given {@code a, b, c}. */
+	@Override
+	public LuaValue call(LuaValue a, LuaValue b, LuaValue c) {
+		return createInstance(varargsOf(a, b, c));
+	}
+
+	/** {@code Class(...)}: a new instance, its constructor given the arguments. */
+	@Override
+	public Varargs invoke(Varargs args) {
+		return createInstance(args);
 	}
 
 }
